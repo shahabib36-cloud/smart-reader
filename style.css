@@ -1,0 +1,174 @@
+:root {
+    --bg: #0f172a; --text: #f1f5f9; --header-bg: rgba(15, 23, 42, 0.98);
+    --accent: #ff4d4d; /* এটি এখন লাল হবে */
+    --border: #334155; --surface: #1e293b;
+    --panel: #020617; --sidebar-w: 320px;
+    --overlay-tint: transparent;
+    --reader-bg: #1e293b;
+    --highlight-bg: rgba(255, 77, 77, 0.3); /* হাইলাইটও হালকা লাল হবে */
+    --highlight-border: #ff4d4d;
+}
+body.eye-comfort { --overlay-tint: rgba(255, 191, 0, 0.08); }
+
+/* Light Mode - Real Book Vibe */
+body.light-mode {
+    --bg: #f4f1ea; --text: #2c2c2c; --header-bg: rgba(244, 241, 234, 0.98);
+    --border: #dcd7c9; --surface: #fffdfa; --panel: #ece8db;
+    --reader-bg: #fffdfa; --accent: #5d4037;
+    --highlight-bg: rgba(93, 64, 55, 0.15); --highlight-border: #5d4037;
+}
+
+/* এই অংশটি বডির ওপরের অদৃশ্য পর্দা সরিয়ে দেবে */
+body::after {
+    content: ""; 
+    position: fixed; 
+    top: 0; 
+    left: 0; 
+    width: 100vw; 
+    height: 100vh;
+    background: var(--overlay-tint); 
+    pointer-events: none; 
+    z-index: 1; /* জাস্ট ১ করে দিন যাতে এটি সবার নিচে থাকে */
+    transition: 0.3s;
+}
+
+/* লগইন ফর্মকে সবার উপরে রাখার জন্য */
+#auth-modal {
+    z-index: 9999 !important; 
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    /* বাকি স্টাইল আগের মতোই থাকবে */
+}
+
+/* কালো ঝাপসা ব্যাকগ্রাউন্ড (Overlay) */
+#overlay {
+    z-index: 9000 !important; /* এটি ফর্মের ঠিক নিচে থাকবে */
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.7); /* একটু গাঢ় করা হয়েছে যাতে ফর্ম ফুটে ওঠে */
+    display: none;
+}
+
+#auth-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--surface);
+    padding: 30px;
+    border-radius: 15px;
+    z-index: 10000 !important; /* এটি বাড়িয়ে ১০০০০ করা হয়েছে যাতে সবকিছুর উপরে থাকে */
+    border: 1px solid var(--border);
+    width: 320px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    display: none;
+}
+
+#overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(2px);
+    display: none;
+    z-index: 2000; /* এটি ফর্মের নিচে কিন্তু বডির উপরে থাকবে */
+}
+
+body { background-color: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; margin: 0; transition: 0.4s; overflow-x: hidden; }
+
+/* Top Bar */
+.top-bar { position: fixed; top: 0; width: 100%; background: var(--header-bg); border-bottom: 1px solid var(--border); z-index: 1000; height: 65px; display: flex; align-items: center; }
+.bar-container { max-width: 1400px; margin: 0 auto; width: 100%; padding: 0 20px; display: flex; justify-content: space-between; align-items: center; }
+
+/* Sidebar Animation */
+#sidebar {
+    position: fixed; left: calc(-1 * var(--sidebar-w)); top: 0; width: var(--sidebar-w); height: 100%; 
+    background: var(--panel); border-right: 1px solid var(--border); z-index: 2000; transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1); 
+    display: flex; flex-direction: column; box-shadow: 10px 0 30px rgba(0,0,0,0.1);
+}
+#sidebar.open { left: 0; }
+.sidebar-content { padding: 20px; flex-grow: 1; overflow-y: auto; }
+
+.active-project-info { background: rgba(59, 130, 246, 0.1); border: 1px solid var(--accent); padding: 10px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; }
+
+.project-item { display: flex; justify-content: space-between; align-items: center; background: var(--surface); padding: 12px; border-radius: 10px; margin-bottom: 10px; border: 1px solid var(--border); position: relative; }
+.project-item.active { border-color: var(#3b82f6); }
+
+.three-dots { cursor: pointer; padding: 5px; font-size: 18px; color: var(--accent); }
+.action-menu { position: absolute; right: 10px; top: 45px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; display: none; flex-direction: column; z-index: 2100; }
+.action-menu button { background: none; border: none; color: var(--text); padding: 8px 15px; text-align: left; cursor: pointer; }
+
+/* Settings Toggle */
+.sidebar-settings { padding: 20px; border-top: 1px solid var(--border); }
+.setting-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 14px; }
+.switch { position: relative; display: inline-block; width: 40px; height: 20px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #cbd5e1; transition: .4s; border-radius: 20px; }
+.slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+input:checked + .slider { background-color: var(--accent); }
+input:checked + .slider:before { transform: translateX(20px); }
+
+/* Layout */
+.layout-wrapper { max-width: 1400px; margin: 100px auto 50px; display: grid; grid-template-columns: 280px 1fr 300px; gap: 25px; padding: 0 20px; }
+textarea { width: 100%; height: 75vh; border: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 25px; border-radius: 15px; font-size: 1.1rem; outline: none; resize: none; }
+#reader-view { display: none; font-family: 'Lora', serif; font-size: 22px; line-height: 1.8; white-space: pre-wrap; background: var(--reader-bg); padding: 50px; border-radius: 4px; min-height: 70vh; border: 1px solid var(--border); }
+
+/* Highlight styling */
+.highlight-word { background: var(--highlight-bg); border-bottom: 2px solid var(--highlight-border); border-radius: 3px; transition: 0.3s ease; }
+
+/* Notebook Sidebar */
+#left-notes-panel { grid-column: 1; display: none; overflow-y: auto; height: 80vh; position: sticky; top: 100px; }
+.note-card { background: var(--surface); padding: 12px; border-radius: 10px; margin-bottom: 10px; border-left: 4px solid var(--accent); cursor: pointer; position: relative; border: 1px solid var(--border); transition: 0.2s; }
+.note-card:hover { transform: translateX(5px); }
+
+.note-title { font-size: 13px; font-weight: 600; display: block; padding-right: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-sub { opacity: 0.8; margin-top: 4px; display: block; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.delete-note { position: absolute; top: 5px; right: 8px; color: #ff5f5f; font-size: 20px; cursor: pointer; z-index: 10; padding: 0 5px; }
+
+.btn-action { width: 100%; padding: 12px; margin-top: 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: 0.2s; font-size: 14px; }
+.btn-action:disabled { cursor: default; opacity: 0.8; border-color: #22c55e; color: #22c55e; }
+
+.nav-btn { background: var(--surface); color: var(--text); border: 1px solid var(--border); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.nav-btn.active { border-color: var(--accent); color: var(--accent); }
+
+#overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); backdrop-filter: blur(2px); display: none; z-index: 1500; }
+#rename-box { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--surface); padding:25px; border-radius:15px; z-index:3000; border:1px solid var(--border); }
+/* লগইন বাটনের উপর মাউস নিলে রঙ পরিবর্তন হবে */
+#login-btn:hover {
+    background: var(--accent) !important;
+    color: white !important;
+    transition: 0.3s ease;
+}
+/* Auth Modal Style */
+#auth-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--surface);
+    padding: 30px;
+    border-radius: 15px;
+    z-index: 9999 !important; /* Eti login form-ke shobar upore rakhbe */
+    border: 1px solid var(--border);
+    width: 320px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    display: none;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translate(-50%, -45%); }
+    to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+#auth-modal .btn-action:hover {
+    filter: brightness(1.2);
+    transform: translateY(-2px);
+}
