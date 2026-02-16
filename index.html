@@ -49,10 +49,12 @@
                     <span class="error-message" id="login-password-error"></span>
                 </div>
                 <div class="forgot-password">
-                    <a href="#" onclick="event.preventDefault(); alert('Reset link sent (demo)');">Forgot Password?</a>
+                    <!-- REAL PASSWORD RESET -->
+                    <a href="#" onclick="forgotPassword(); return false;">Forgot Password?</a>
                 </div>
                 <button class="auth-btn" onclick="handleLogin()">Login</button>
-                <div class="google-btn" onclick="alert('Google login demo')">
+                <!-- REAL GOOGLE LOGIN -->
+                <div class="google-btn" onclick="handleGoogleLogin()">
                     <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" width="20">
                     <span>Login with Google</span>
                 </div>
@@ -86,7 +88,8 @@
                     <span class="error-message" id="signup-confirm-error"></span>
                 </div>
                 <button class="auth-btn" onclick="handleSignup()">Sign Up</button>
-                <div class="google-btn" onclick="alert('Google signup demo')">
+                <!-- REAL GOOGLE SIGNUP (same function) -->
+                <div class="google-btn" onclick="handleGoogleLogin()">
                     <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" width="20">
                     <span>Sign Up with Google</span>
                 </div>
@@ -139,7 +142,7 @@
                 <button onclick="changeFontSize(-2)" class="nav-btn">A-</button>
             </div>
             <div style="display:flex; align-items:center; gap:15px;">
-                <!-- NEW: Login/Logout Button (left of speed controller) -->
+                <!-- Login/Logout Button -->
                 <button id="auth-btn" onclick="toggleAuthModal()" class="nav-btn">Login</button>
 
                 <div class="speed-wrapper">
