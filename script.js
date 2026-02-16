@@ -2,7 +2,7 @@
 const DB_NAME = "AISmartReaderDB";
 const DB_VERSION = 1;
 const STORE_NAME = "projects";
-let idb; // renamed from 'db' to avoid confusion with Firestore
+let idb;
 
 function initDB() {
     return new Promise((resolve, reject) => {
@@ -19,10 +19,14 @@ function initDB() {
 }
 
 async function getAllProjects() {
-    // If user is logged in, fetch from Firestore, else from IndexedDB
     if (currentUser) {
         const snapshot = await firestoreDb.collection(`users/${currentUser.uid}/projects`).get();
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Remove any legacy 'notes' field from project documents
+        return snapshot.docs.map(doc => {
+            const data = doc.data();
+            delete data.notes;
+            return { id: doc.id, ...data };
+        });
     } else {
         return new Promise((resolve) => {
             const transaction = idb.transaction([STORE_NAME], "readonly");
@@ -39,8 +43,9 @@ async function getAllProjects() {
 
 async function saveProjectToDB(project) {
     if (currentUser) {
-        // Save to Firestore – use project.id as document ID
-        await firestoreDb.collection(`users/${currentUser.uid}/projects`).doc(project.id.toString()).set(project);
+        // Save only project fields (no notes) to Firestore
+        const { notes, ...projectWithoutNotes } = project;
+        await firestoreDb.collection(`users/${currentUser.uid}/projects`).doc(project.id.toString()).set(projectWithoutNotes);
     } else {
         return new Promise((resolve) => {
             const transaction = idb.transaction([STORE_NAME], "readwrite");
@@ -53,6 +58,13 @@ async function saveProjectToDB(project) {
 
 async function deleteProjectFromDB(id) {
     if (currentUser) {
+        // Delete all notes in sub‑collection first
+        const notesRef = firestoreDb.collection(`users/${currentUser.uid}/projects/${id}/notes`);
+        const snapshot = await notesRef.get();
+        const batch = firestoreDb.batch();
+        snapshot.docs.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+        // Then delete the project document
         await firestoreDb.collection(`users/${currentUser.uid}/projects`).doc(id.toString()).delete();
     } else {
         return new Promise((resolve) => {
@@ -78,9 +90,9 @@ const auth = firebase.auth();
 const firestoreDb = firebase.firestore();
 
 /* --- Global Variables --- */
-let currentUser = null;                // Firebase user object or null
-let isGuestMode = true;                 // derived from currentUser
-let migrationInProgress = false;        // prevent concurrent actions
+let currentUser = null;
+let isGuestMode = true;
+let migrationInProgress = false;
 
 const textarea = document.getElementById('main-input');
 const reader = document.getElementById('reader-view');
@@ -96,32 +108,26 @@ auth.onAuthStateChanged(async (user) => {
     currentUser = user;
     isGuestMode = !user;
 
-    // Update UI button
     updateAuthButton();
 
     if (user && !wasLoggedIn) {
-        // User just logged in – trigger migration if guest projects exist
         await migrateGuestProjects();
     } else if (!user && wasLoggedIn) {
-        // User logged out – clear any Firestore‑based project from view
         if (currentProjectId) {
-            // If the active project came from Firestore, we cannot keep it
-            createNewProject(); // reset to empty editor
+            createNewProject();
         }
     }
 
-    // Refresh project list and notes for the new state
     await renderProjects();
     await renderNotes();
 });
 
-/* --- Migration: copy guest projects to Firestore and clear IndexedDB --- */
+/* --- Migration: copy guest projects (with notes) to Firestore sub‑collections --- */
 async function migrateGuestProjects() {
     if (!currentUser) return;
     if (migrationInProgress) return;
     migrationInProgress = true;
 
-    // Show a simple loading overlay (optional – add to CSS if desired)
     const loader = document.createElement('div');
     loader.id = 'migration-loader';
     loader.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); backdrop-filter:blur(3px); display:flex; align-items:center; justify-content:center; z-index:20000; color:white; font-size:1.2rem;';
@@ -129,7 +135,6 @@ async function migrateGuestProjects() {
     document.body.appendChild(loader);
 
     try {
-        // 1. Get guest projects from IndexedDB
         const guestProjects = await new Promise((resolve) => {
             const tx = idb.transaction([STORE_NAME], "readonly");
             const store = tx.objectStore(STORE_NAME);
@@ -143,22 +148,35 @@ async function migrateGuestProjects() {
             return;
         }
 
-        // 2. Get existing Firestore projects (to merge, not overwrite)
         const snapshot = await firestoreDb.collection(`users/${currentUser.uid}/projects`).get();
         const existingIds = new Set(snapshot.docs.map(doc => doc.id));
 
-        // 3. Add only guest projects that do not already exist in Firestore
         const batch = firestoreDb.batch();
+        const projectsToMigrate = [];
+
         guestProjects.forEach(project => {
             const idStr = project.id.toString();
             if (!existingIds.has(idStr)) {
-                const ref = firestoreDb.collection(`users/${currentUser.uid}/projects`).doc(idStr);
-                batch.set(ref, project);
+                const projectRef = firestoreDb.collection(`users/${currentUser.uid}/projects`).doc(idStr);
+                const { notes, ...projectData } = project;
+                batch.set(projectRef, projectData);
+                projectsToMigrate.push({ id: idStr, notes: notes || [] });
             }
         });
+
         await batch.commit();
 
-        // 4. Clear IndexedDB (delete all projects)
+        // Migrate notes for each new project
+        for (const { id, notes } of projectsToMigrate) {
+            for (const note of notes) {
+                await firestoreDb.collection(`users/${currentUser.uid}/projects/${id}/notes`).add({
+                    en: note.en,
+                    bn: note.bn,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            }
+        }
+
         await new Promise((resolve) => {
             const tx = idb.transaction([STORE_NAME], "readwrite");
             const store = tx.objectStore(STORE_NAME);
@@ -269,10 +287,9 @@ function toggleSidebar() {
     renderProjects();
 }
 
-// Pin/Unpin project
 async function pinProject(id) {
     const projs = await getAllProjects();
-    const project = projs.find(p => p.id == id); // use loose equality because id may be string from Firestore
+    const project = projs.find(p => p.id == id);
     if (project) {
         project.pinned = !project.pinned;
         await saveProjectToDB(project);
@@ -281,7 +298,6 @@ async function pinProject(id) {
     closeAllMenus();
 }
 
-// Share project (copy content)
 async function shareProject(id) {
     const projs = await getAllProjects();
     const project = projs.find(p => p.id == id);
@@ -373,65 +389,122 @@ function createNewProject() {
     hidePanel(); closeAll(); renderProjects(); renderNotes(); 
 }
 
-async function addNote() {
-    const projs = await getAllProjects();
-    let p = projs.find(x => x.id == currentProjectId);
-    if(p) {
-        if(!p.notes) p.notes = [];
-        if(!p.notes.some(n => n.en.trim().toLowerCase() === lastEn.toLowerCase())) {
-            p.notes.unshift({en: lastEn, bn: lastBn});
-        }
-        await saveProjectToDB(p); 
-        renderNotes();
+/* --- Notes functions (adapted for sub‑collection) --- */
 
-        const noteBtn = document.querySelector('.btn-note');
-        noteBtn.innerHTML = "✅ Already Added";
-        noteBtn.style.opacity = "0.7";
-        noteBtn.style.pointerEvents = "none";
+async function getNotesForProject(projectId) {
+    if (!projectId) return [];
+    if (currentUser) {
+        const snapshot = await firestoreDb.collection(`users/${currentUser.uid}/projects/${projectId}/notes`).get();
+        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } else {
+        const projects = await getAllProjects();
+        const project = projects.find(p => p.id == projectId);
+        return project?.notes || [];
     }
 }
 
-async function deleteNote(e, encodedWord) {
-    e.stopPropagation();
-    const word = decodeURIComponent(encodedWord);
-    const projs = await getAllProjects();
-    let p = projs.find(x => x.id == currentProjectId);
-    if(p) { 
-        p.notes = p.notes.filter(n => n.en.trim() !== word.trim()); 
-        await saveProjectToDB(p); 
-        renderNotes(); 
+async function isNoteAdded(projectId, text) {
+    if (!projectId) return false;
+    if (currentUser) {
+        const snapshot = await firestoreDb.collection(`users/${currentUser.uid}/projects/${projectId}/notes`)
+            .where('en', '==', text).get();
+        return !snapshot.empty;
+    } else {
+        const projects = await getAllProjects();
+        const p = projects.find(x => x.id == projectId);
+        return p?.notes?.some(n => n.en.trim().toLowerCase() === text.toLowerCase()) || false;
     }
+}
+
+async function addNote() {
+    if (!currentProjectId || !lastEn) return;
+    if (currentUser) {
+        // Check if already added (though button should be disabled)
+        if (await isNoteAdded(currentProjectId, lastEn)) return;
+        await firestoreDb.collection(`users/${currentUser.uid}/projects/${currentProjectId}/notes`).add({
+            en: lastEn,
+            bn: lastBn,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+    } else {
+        const projects = await getAllProjects();
+        let p = projects.find(x => x.id == currentProjectId);
+        if (p) {
+            if (!p.notes) p.notes = [];
+            if (!p.notes.some(n => n.en.trim().toLowerCase() === lastEn.toLowerCase())) {
+                p.notes.unshift({ en: lastEn, bn: lastBn });
+                await saveProjectToDB(p);
+            }
+        }
+    }
+    renderNotes();
+    const noteBtn = document.querySelector('.btn-note');
+    noteBtn.innerHTML = "✅ Already Added";
+    noteBtn.style.opacity = "0.7";
+    noteBtn.style.pointerEvents = "none";
+}
+
+async function deleteNote(e, noteIdOrText) {
+    e.stopPropagation();
+    if (!currentProjectId) return;
+    if (currentUser) {
+        // noteIdOrText is the document ID
+        await firestoreDb.collection(`users/${currentUser.uid}/projects/${currentProjectId}/notes`).doc(noteIdOrText).delete();
+    } else {
+        // noteIdOrText is the encoded English text
+        const word = decodeURIComponent(noteIdOrText);
+        const projects = await getAllProjects();
+        let p = projects.find(x => x.id == currentProjectId);
+        if (p) {
+            p.notes = p.notes.filter(n => n.en.trim() !== word.trim());
+            await saveProjectToDB(p);
+        }
+    }
+    renderNotes();
 }
 
 async function renderNotes() {
-    const projs = await getAllProjects();
-    let p = projs.find(x => x.id == currentProjectId);
-    document.getElementById('notes-container').innerHTML = p?.notes?.map(n => `
-        <div class="note-card" onclick="handleNoteClick('${n.en.replace(/'/g, "\\'")}')">
-          <span class="delete-note" onclick="deleteNote(event, '${encodeURIComponent(n.en)}')">✕</span>
-            <b style="font-size:13px;">${n.en.substring(0,30)}</b><br><small style="opacity:0.8;">${n.bn.substring(0,40)}</small>
-        </div>
-    `).join('') || "";
+    if (!currentProjectId) {
+        document.getElementById('notes-container').innerHTML = '';
+        return;
+    }
+    const notes = await getNotesForProject(currentProjectId);
+    const html = notes.map(note => {
+        if (currentUser) {
+            // note has an id
+            return `<div class="note-card" onclick="handleNoteClick('${note.en.replace(/'/g, "\\'")}')">
+                <span class="delete-note" onclick="deleteNote(event, '${note.id}')">✕</span>
+                <b style="font-size:13px;">${note.en.substring(0,30)}</b><br><small style="opacity:0.8;">${note.bn.substring(0,40)}</small>
+            </div>`;
+        } else {
+            // guest: use encoded English as identifier
+            return `<div class="note-card" onclick="handleNoteClick('${note.en.replace(/'/g, "\\'")}')">
+                <span class="delete-note" onclick="deleteNote(event, '${encodeURIComponent(note.en)}')">✕</span>
+                <b style="font-size:13px;">${note.en.substring(0,30)}</b><br><small style="opacity:0.8;">${note.bn.substring(0,40)}</small>
+            </div>`;
+        }
+    }).join('');
+    document.getElementById('notes-container').innerHTML = html;
 }
 
+/* --- View toggle with guest limit --- */
 async function toggleView() {
     if (reader.style.display === 'none') {
         const content = textarea.value.trim(); if(!content) return;
         
-        // --- Guest project limit check (only for guests) ---
         if (!currentUser) {
-            const projects = await getAllProjects(); // from IndexedDB
+            const projects = await getAllProjects();
             if (projects.length >= 3) {
                 alert('Guest users can only create up to 3 projects. Please log in to create more.');
                 return;
             }
         }
-        // ---------------------------------
 
         if (!currentProjectId) currentProjectId = Date.now();
         const projs = await getAllProjects();
         const existing = projs.find(p => p.id == currentProjectId);
-        const projectData = existing ? { ...existing, content } : { id: currentProjectId, name: content.substring(0,20), content, notes: [], pinned: false };
+        const projectData = existing ? { ...existing, content } : { id: currentProjectId, name: content.substring(0,20), content, pinned: false };
+        // notes are not included – they are stored separately
         await saveProjectToDB(projectData);
         reader.innerText = content; document.getElementById('editor-view').style.display = 'none';
         reader.style.display = 'block'; if(isNotebookVisible) document.getElementById('left-notes-panel').style.display = 'block';
@@ -443,17 +516,15 @@ async function toggleView() {
     }
 }
 
+/* --- Mouseup event for selection --- */
 document.addEventListener('mouseup', async () => {
     let s = window.getSelection().toString().trim();
     if (reader.style.display === 'block' && s.length > 0) {
         lastEn = s; panel.style.display = 'block';
 
-        const projs = await getAllProjects();
-        const p = projs.find(x => x.id == currentProjectId);
-        const isAdded = p?.notes?.some(n => n.en.trim().toLowerCase() === s.toLowerCase());
+        const added = await isNoteAdded(currentProjectId, s);
         const noteBtn = document.querySelector('.btn-note');
-
-        if (isAdded) {
+        if (added) {
             noteBtn.innerHTML = "✅ Already Added";
             noteBtn.style.opacity = "0.7";
             noteBtn.style.pointerEvents = "none";
@@ -517,33 +588,27 @@ function toggleSpeedMenu() {
 
 /* ===== AUTHENTICATION (Firebase) ===== */
 
-// Check if user is logged in (synchronous, based on currentUser)
 function isLoggedIn() {
     return currentUser !== null;
 }
 
-// Get current user email (or null)
 function getCurrentUser() {
     return currentUser ? { email: currentUser.email } : null;
 }
 
-// Update login/logout button text
 function updateAuthButton() {
     const btn = document.getElementById('auth-btn');
     btn.textContent = currentUser ? 'Logout' : 'Login';
 }
 
-// Logout function
 async function logout() {
     try {
         await auth.signOut();
-        // onAuthStateChanged will handle UI updates
     } catch (err) {
         console.error('Logout error:', err);
     }
 }
 
-// Toggle modal: if logged in -> logout, else open modal
 function toggleAuthModal() {
     if (currentUser) {
         logout();
@@ -552,7 +617,6 @@ function toggleAuthModal() {
     }
 }
 
-// Open modal and show login form by default
 function openAuthModal() {
     document.getElementById('auth-overlay').style.display = 'block';
     document.getElementById('auth-modal').style.display = 'block';
@@ -562,18 +626,15 @@ function openAuthModal() {
     clearAuthInputs();
 }
 
-// Close modal
 function closeAuthModal() {
     document.getElementById('auth-overlay').style.display = 'none';
     document.getElementById('auth-modal').style.display = 'none';
 }
 
-// Clear all error messages
 function clearAuthErrors() {
     document.querySelectorAll('.error-message').forEach(el => el.textContent = '');
 }
 
-// Clear input fields
 function clearAuthInputs() {
     document.getElementById('login-email').value = '';
     document.getElementById('login-password').value = '';
@@ -582,21 +643,18 @@ function clearAuthInputs() {
     document.getElementById('signup-confirm').value = '';
 }
 
-// Switch to signup form
 function switchToSignup() {
     document.getElementById('login-form').style.display = 'none';
     document.getElementById('signup-form').style.display = 'block';
     clearAuthErrors();
 }
 
-// Switch to login form
 function switchToLogin() {
     document.getElementById('signup-form').style.display = 'none';
     document.getElementById('login-form').style.display = 'block';
     clearAuthErrors();
 }
 
-// Toggle password visibility
 function togglePasswordVisibility(inputId, eyeElement) {
     const input = document.getElementById(inputId);
     if (input.type === 'password') {
@@ -608,12 +666,10 @@ function togglePasswordVisibility(inputId, eyeElement) {
     }
 }
 
-// Simple email validation
 function isValidEmail(email) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-// Handle login with Firebase
 async function handleLogin() {
     const email = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
@@ -639,14 +695,13 @@ async function handleLogin() {
 
     try {
         await auth.signInWithEmailAndPassword(email, password);
-        closeAuthModal(); // success – observer will handle migration
+        closeAuthModal();
     } catch (error) {
         console.error(error);
         document.getElementById('login-password-error').textContent = error.message;
     }
 }
 
-// Handle signup with Firebase
 async function handleSignup() {
     const email = document.getElementById('signup-email').value.trim();
     const password = document.getElementById('signup-password').value;
@@ -685,28 +740,50 @@ async function handleSignup() {
 
     try {
         await auth.createUserWithEmailAndPassword(email, password);
-        closeAuthModal(); // success – observer will handle migration
+        closeAuthModal();
     } catch (error) {
         console.error(error);
         document.getElementById('signup-password-error').textContent = error.message;
     }
 }
 
-// Google login placeholder (still shows alert)
-function handleGoogleLogin() {
-    alert('Google login demo – will be implemented later');
+/* --- Real Google Sign-In --- */
+async function handleGoogleLogin() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    try {
+        await auth.signInWithPopup(provider);
+        closeAuthModal();
+    } catch (error) {
+        console.error(error);
+        alert(error.message);
+    }
 }
 
-// Attach Google click handlers (they are already in HTML, but we keep alert)
-// The HTML uses onclick="alert(...)", so no change needed.
+/* --- Real Password Reset --- */
+async function forgotPassword() {
+    const email = document.getElementById('login-email').value.trim();
+    if (!email) {
+        alert('Please enter your email address.');
+        return;
+    }
+    if (!isValidEmail(email)) {
+        alert('Please enter a valid email address.');
+        return;
+    }
+    try {
+        await auth.sendPasswordResetEmail(email);
+        alert('Password reset email sent. Check your inbox.');
+    } catch (error) {
+        console.error(error);
+        alert(error.message);
+    }
+}
 
 /* --- Initialize everything on page load --- */
 window.onload = async () => {
-    await initDB();          // IndexedDB ready
-    initTheme();             // apply saved theme
-    loadVoices();            // populate voice list
-    // Auth observer is already set above, so no further init needed
-    // Render projects (will use currentUser state)
+    await initDB();
+    initTheme();
+    loadVoices();
     await renderProjects();
     await renderNotes();
 };
