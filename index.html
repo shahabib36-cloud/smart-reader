@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Smart Reader - Final Version</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <!-- Firebase SDK (compat version) – config will be added in script.js -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+</head>
+<body>
+
+    <div id="overlay" onclick="closeAll()"></div>
+
+    <!-- Rename Box – z-index increased to 10000 -->
+    <div id="rename-box"
+        style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--surface); padding:20px; border-radius:12px; z-index:10000; border:1px solid var(--border);">
+        <input type="text" id="new-name-input"
+            style="padding:8px; width:200px; border-radius:5px; border:1px solid var(--border); background:var(--bg); color:var(--text);">
+        <button onclick="confirmRename()"
+            style="background:var(--accent); border:none; color:white; padding:8px 15px; border-radius:5px; margin-left:10px; cursor:pointer;">OK</button>
+    </div>
+
+    <!-- Auth Modal Overlay (blur) -->
+    <div id="auth-overlay" class="auth-overlay" onclick="closeAuthModal()" style="display: none;"></div>
+
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="auth-modal" style="display: none;">
+        <div class="auth-modal-content">
+            <span class="close-modal" onclick="closeAuthModal()">&times;</span>
+            
+            <!-- Login Form (visible by default) -->
+            <div id="login-form" class="auth-form">
+                <h3>Login</h3>
+                <div class="input-group">
+                    <label>Email</label>
+                    <input type="email" id="login-email" placeholder="Enter your email">
+                    <span class="error-message" id="login-email-error"></span>
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="login-password" placeholder="Enter password">
+                        <span class="eye-icon" onclick="togglePasswordVisibility('login-password', this)">👁️</span>
+                    </div>
+                    <span class="error-message" id="login-password-error"></span>
+                </div>
+                <div class="forgot-password">
+                    <a href="#" onclick="event.preventDefault(); alert('Reset link sent (demo)');">Forgot Password?</a>
+                </div>
+                <button class="auth-btn" onclick="handleLogin()">Login</button>
+                <div class="google-btn" onclick="alert('Google login demo')">
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" width="20">
+                    <span>Login with Google</span>
+                </div>
+                <p class="toggle-link">
+                    Don't have an account? <a href="#" onclick="switchToSignup()">Sign Up</a>
+                </p>
+            </div>
+
+            <!-- Signup Form (hidden initially) -->
+            <div id="signup-form" class="auth-form" style="display: none;">
+                <h3>Sign Up</h3>
+                <div class="input-group">
+                    <label>Email</label>
+                    <input type="email" id="signup-email" placeholder="Enter your email">
+                    <span class="error-message" id="signup-email-error"></span>
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="signup-password" placeholder="Create password">
+                        <span class="eye-icon" onclick="togglePasswordVisibility('signup-password', this)">👁️</span>
+                    </div>
+                    <span class="error-message" id="signup-password-error"></span>
+                </div>
+                <div class="input-group">
+                    <label>Confirm Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="signup-confirm" placeholder="Confirm password">
+                        <span class="eye-icon" onclick="togglePasswordVisibility('signup-confirm', this)">👁️</span>
+                    </div>
+                    <span class="error-message" id="signup-confirm-error"></span>
+                </div>
+                <button class="auth-btn" onclick="handleSignup()">Sign Up</button>
+                <div class="google-btn" onclick="alert('Google signup demo')">
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" width="20">
+                    <span>Sign Up with Google</span>
+                </div>
+                <p class="toggle-link">
+                    Already have an account? <a href="#" onclick="switchToLogin()">Login</a>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <div id="sidebar">
+        <div class="sidebar-content">
+            <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+                <strong>Library</strong>
+                <span style="cursor:pointer;" onclick="toggleSidebar()">✕</span>
+            </div>
+            <div id="active-proj-display" class="active-project-info" style="display:none;">
+                <div style="color:var(--accent); font-weight:bold; font-size:10px; text-transform:uppercase; margin-bottom:4px;">Now Reading</div>
+                <div id="active-proj-name" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">None</div>
+            </div>
+            <button onclick="createNewProject()" class="btn-action" style="justify-content:center; border-style:dashed;">+ New Text</button>
+            <div id="project-list" style="margin-top:20px;"></div>
+        </div>
+        <div class="sidebar-settings">
+            <div style="font-weight: bold; margin-bottom: 12px; font-size: 14px; color: var(--accent);">⚙️ Settings</div>
+            <div class="setting-item">
+                <span>Dark Mode</span>
+                <label class="switch">
+                    <input type="checkbox" id="dark-mode-toggle" onchange="updateThemeSettings()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="setting-item">
+                <span>Eye Comfort</span>
+                <label class="switch">
+                    <input type="checkbox" id="eye-comfort-toggle" onchange="updateThemeSettings()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <div class="top-bar">
+        <div class="bar-container">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <div style="font-size:24px; cursor:pointer; margin-right:5px;" onclick="toggleSidebar()">☰</div>
+                <select id="voice-select" style="background:var(--surface); color:var(--text); border:1px solid var(--border); padding:6px; border-radius:8px; width:140px;"></select>
+                <button onclick="toggleNotebook()" id="nb-toggle-btn" class="nav-btn">📓 Notebook</button>
+                <button onclick="changeFontSize(2)" class="nav-btn">A+</button>
+                <button onclick="changeFontSize(-2)" class="nav-btn">A-</button>
+            </div>
+            <div style="display:flex; align-items:center; gap:15px;">
+                <!-- NEW: Login/Logout Button (left of speed controller) -->
+                <button id="auth-btn" onclick="toggleAuthModal()" class="nav-btn">Login</button>
+
+                <div class="speed-wrapper">
+                   <button onclick="toggleSpeedMenu()" id="speed-toggle-btn" class="nav-btn">⚡ 1.0x</button>
+                    <div id="speed-dropdown" class="speed-dropdown">
+                        <div class="sd-header">Playback Speed</div>
+                        <div class="speed-options">
+                            <button onclick="setSpeed(0.5)">0.5x</button>
+                            <button onclick="setSpeed(0.75)">0.75x</button>
+                            <button onclick="setSpeed(1)">1.0x</button>
+                            <button onclick="setSpeed(1.25)">1.25x</button>
+                            <button onclick="setSpeed(1.5)">1.5x</button>
+                            <button onclick="setSpeed(1.75)">1.75x</button>
+                            <button onclick="setSpeed(2)">2.0x</button>
+                        </div>
+                    </div>
+                </div>
+
+                <button onclick="toggleView()" id="view-toggle" style="background:var(--accent); color:white; border:none; padding:8px 18px; border-radius:8px; cursor:pointer; font-weight:bold;">📖 Read Mode</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="layout-wrapper">
+        <div id="left-notes-panel">
+            <h4 style="margin-top:0; color:var(--accent);">Notebook</h4>
+            <div id="notes-container"></div>
+        </div>
+        <div id="editor-view" style="grid-column: 2;">
+            <textarea id="main-input" placeholder="Paste your text here..."></textarea>
+        </div>
+        <div id="reader-view" style="grid-column: 2;"></div>
+        <div id="right-panel" style="grid-column: 3; position: sticky; top: 100px; height: fit-content; background: var(--panel); padding: 25px; border-radius: 15px; border: 1px solid var(--border); display: none;">
+            <div style="font-size: 11px; color: var(--accent); font-weight: bold; text-transform: uppercase;">Translation</div>
+            <div id="trans-text" style="font-size: 1rem; margin-bottom: 15px; line-height: 1.4;">...</div>
+            <div id="syllable-section">
+                <div style="font-size: 11px; color: var(--accent); font-weight: bold; text-transform: uppercase;">Syllables</div>
+                <div id="syllable-text" style="font-size: 1.2rem; font-weight: bold; color: var(--accent); letter-spacing: 2px; margin-bottom: 15px;">...</div>
+            </div>
+            <button class="btn-action" onclick="speak(lastEn, 'en')">🔊 Pronounce (EN)</button>
+            <button class="btn-action" onclick="speak(lastBn, 'bn')">🔊 শুনুন (BN)</button>
+            <hr style="border:0; border-top:1px solid var(--border); margin:15px 0;">
+            <button class="btn-action btn-note" onclick="addNote()">📝 Add to Notebook</button>
+            <button class="btn-action" style="opacity:0.6; justify-content:center;" onclick="hidePanel()">Dismiss</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
