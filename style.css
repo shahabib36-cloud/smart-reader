@@ -54,7 +54,6 @@ body { background-color: var(--bg); color: var(--text); font-family: 'Inter', sa
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.05);
 }
-/* Disable hover transform when menu is open */
 .project-item.menu-open:hover {
     transform: none;
 }
@@ -64,7 +63,6 @@ body { background-color: var(--bg); color: var(--text); font-family: 'Inter', sa
 
 .three-dots { cursor: pointer; padding: 5px; font-size: 18px; color: var(--accent); }
 
-/* Action Menu – now above eye comfort overlay */
 .action-menu {
     position: absolute;
     right: 10px;
@@ -75,7 +73,7 @@ body { background-color: var(--bg); color: var(--text); font-family: 'Inter', sa
     padding: 6px 0;
     display: none;
     flex-direction: column;
-    z-index: 10000;                /* Increased from 2100 */
+    z-index: 10000;
     box-shadow: 0 10px 25px rgba(0,0,0,0.2);
     min-width: 150px;
     backdrop-filter: blur(5px);
@@ -118,7 +116,7 @@ textarea { width: 100%; height: 75vh; border: 1px solid var(--border); backgroun
 #left-notes-panel { grid-column: 1; display: none; overflow-y: auto; height: 80vh; position: sticky; top: 100px; }
 .note-card { 
     background: var(--surface); 
-    padding: 15px; 
+    padding: 15px 15px 15px 35px; /* extra left padding for pin icon */
     border-radius: 12px; 
     margin-bottom: 12px; 
     border-left: 5px solid var(--accent); 
@@ -128,19 +126,29 @@ textarea { width: 100%; height: 75vh; border: 1px solid var(--border); backgroun
     transition: 0.3s;
 }
 .note-card:hover { background: rgba(59, 130, 246, 0.05); }
-.delete-note { position: absolute; top: 5px; right: 10px; color: #ff5f5f; font-weight: bold; cursor: pointer; }
-
-/* Pin icon style */
-.pin-note {
+.delete-note { 
+    position: absolute; 
+    top: 5px; 
+    right: 10px; 
+    color: #ff5f5f; 
+    font-weight: bold; 
     cursor: pointer;
-    margin-right: 8px;
-    font-size: 14px;
-    user-select: none;
+    z-index: 5;
+}
+.pin-note {
+    position: absolute;
+    top: 5px;
+    left: 8px;
+    font-size: 16px;
+    cursor: pointer;
+    opacity: 0.8;
+    transition: opacity 0.2s, transform 0.2s;
+    z-index: 5;
 }
 .pin-note:hover {
-    opacity: 0.8;
+    opacity: 1;
+    transform: scale(1.1);
 }
-
 /* Light mode extra polish */
 body.light-mode textarea, 
 body.light-mode #reader-view {
@@ -158,7 +166,6 @@ body.light-mode .btn-action {
 .nav-btn.active { border-color: var(--accent); color: var(--accent); }
 #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; z-index: 1500; }
 
-/* Speed Dropdown – also above overlay */
 .speed-wrapper { position: relative; }
 .speed-dropdown {
     display: none;
@@ -171,7 +178,7 @@ body.light-mode .btn-action {
     border-radius: 12px;
     padding: 15px;
     box-shadow: 0 15px 35px rgba(0,0,0,0.4);
-    z-index: 10000;                /* Increased from 3000 */
+    z-index: 10000;
 }
 .speed-dropdown.active { display: block; }
 .sd-header { 
@@ -212,7 +219,7 @@ body.light-mode .btn-action {
     background: rgba(0, 0, 0, 0.4);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
-    z-index: 10001; /* above everything except modal */
+    z-index: 10001;
     display: none;
 }
 
@@ -226,16 +233,15 @@ body.light-mode .btn-action {
     background: var(--surface);
     border-radius: 20px;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-    z-index: 10002; /* above overlay */
+    z-index: 10002;
     display: none;
     border: 1px solid var(--border);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
-    background: rgba(var(--surface-rgb, 30, 41, 59), 0.9); /* fallback */
+    background: rgba(var(--surface-rgb, 30, 41, 59), 0.9);
     color: var(--text);
 }
 
-/* For light mode, adjust background opacity */
 body.light-mode .auth-modal {
     background: rgba(255, 255, 255, 0.9);
 }
