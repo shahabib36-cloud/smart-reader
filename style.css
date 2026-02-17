@@ -128,26 +128,17 @@ textarea { width: 100%; height: 75vh; border: 1px solid var(--border); backgroun
     transition: 0.3s;
 }
 .note-card:hover { background: rgba(59, 130, 246, 0.05); }
-.delete-note { position: absolute; top: 5px; right: 10px; color: #ff5f5f; font-weight: bold; }
+.delete-note { position: absolute; top: 5px; right: 10px; color: #ff5f5f; font-weight: bold; cursor: pointer; }
 
-/* --- Pin icon for notes --- */
-.note-pin {
+/* Pin icon style */
+.pin-note {
     cursor: pointer;
-    margin-right: 6px;
+    margin-right: 8px;
     font-size: 14px;
     user-select: none;
-    display: inline-block;
-    color: var(--text);
-    opacity: 0.7;
-    transition: 0.2s;
 }
-.note-pin:hover {
-    opacity: 1;
-    transform: scale(1.1);
-}
-.note-pin.pinned {
-    opacity: 1;
-    color: var(--accent);
+.pin-note:hover {
+    opacity: 0.8;
 }
 
 /* Light mode extra polish */
