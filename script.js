@@ -21,10 +21,9 @@ function initDB() {
 async function getAllProjects() {
     if (currentUser) {
         const snapshot = await firestoreDb.collection(`users/${currentUser.uid}/projects`).get();
-        // Remove any legacy 'notes' field from project documents
         return snapshot.docs.map(doc => {
             const data = doc.data();
-            delete data.notes;
+            delete data.notes; // legacy field
             return { id: doc.id, ...data };
         });
     } else {
@@ -33,8 +32,36 @@ async function getAllProjects() {
             const store = transaction.objectStore(STORE_NAME);
             const request = store.getAll();
             request.onsuccess = () => {
-                const projects = request.result || [];
-                projects.forEach(p => { if (p.pinned === undefined) p.pinned = false; });
+                let projects = request.result || [];
+                // Backward compatibility: ensure notes have id, createdAt, pinned
+                projects = projects.map(project => {
+                    if (project.notes) {
+                        let changed = false;
+                        project.notes = project.notes.map(note => {
+                            const newNote = { ...note };
+                            if (!newNote.id) {
+                                newNote.id = 'note_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                                changed = true;
+                            }
+                            if (!newNote.createdAt) {
+                                newNote.createdAt = Date.now();
+                                changed = true;
+                            }
+                            if (newNote.pinned === undefined) {
+                                newNote.pinned = false;
+                                changed = true;
+                            }
+                            return newNote;
+                        });
+                        if (changed) {
+                            // Save back to IndexedDB (fire-and-forget)
+                            const tx = idb.transaction([STORE_NAME], "readwrite");
+                            tx.objectStore(STORE_NAME).put(project);
+                        }
+                    }
+                    if (project.pinned === undefined) project.pinned = false;
+                    return project;
+                });
                 resolve(projects);
             };
         });
@@ -43,7 +70,6 @@ async function getAllProjects() {
 
 async function saveProjectToDB(project) {
     if (currentUser) {
-        // Save only project fields (no notes) to Firestore
         const { notes, ...projectWithoutNotes } = project;
         await firestoreDb.collection(`users/${currentUser.uid}/projects`).doc(project.id.toString()).set(projectWithoutNotes);
     } else {
@@ -58,13 +84,11 @@ async function saveProjectToDB(project) {
 
 async function deleteProjectFromDB(id) {
     if (currentUser) {
-        // Delete all notes in sub‑collection first
         const notesRef = firestoreDb.collection(`users/${currentUser.uid}/projects/${id}/notes`);
         const snapshot = await notesRef.get();
         const batch = firestoreDb.batch();
         snapshot.docs.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
-        // Then delete the project document
         await firestoreDb.collection(`users/${currentUser.uid}/projects`).doc(id.toString()).delete();
     } else {
         return new Promise((resolve) => {
@@ -166,18 +190,17 @@ async function migrateGuestProjects() {
 
         await batch.commit();
 
-        // Migrate notes for each new project, now with pinned and createdAt
+        // Migrate notes for each new project
         for (const { id, notes } of projectsToMigrate) {
             for (const note of notes) {
-                // If note doesn't have pinned/createdAt, set defaults
-                const pinned = note.pinned === undefined ? false : note.pinned;
-                // Use server timestamp for createdAt; if note had a local timestamp, we ignore it to keep consistency
-                await firestoreDb.collection(`users/${currentUser.uid}/projects/${id}/notes`).add({
+                // Preserve timestamp and pinned status
+                const noteData = {
                     en: note.en,
                     bn: note.bn,
-                    pinned: pinned,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
+                    pinned: note.pinned || false,
+                    createdAt: note.createdAt ? new Date(note.createdAt) : firebase.firestore.FieldValue.serverTimestamp()
+                };
+                await firestoreDb.collection(`users/${currentUser.uid}/projects/${id}/notes`).add(noteData);
             }
         }
 
@@ -393,12 +416,12 @@ function createNewProject() {
     hidePanel(); closeAll(); renderProjects(); renderNotes(); 
 }
 
-/* --- Notes functions (adapted for sub‑collection with pinning and timestamps) --- */
+/* --- Notes functions (adapted for sub‑collection with pin and timestamp) --- */
 
 async function getNotesForProject(projectId) {
     if (!projectId) return [];
     if (currentUser) {
-        // Firestore: pinned first, then newest
+        // Firestore: order by pinned desc, createdAt desc
         const snapshot = await firestoreDb.collection(`users/${currentUser.uid}/projects/${projectId}/notes`)
             .orderBy('pinned', 'desc')
             .orderBy('createdAt', 'desc')
@@ -408,15 +431,15 @@ async function getNotesForProject(projectId) {
         const projects = await getAllProjects();
         const project = projects.find(p => p.id == projectId);
         let notes = project?.notes || [];
-        // Sort: pinned first, then by createdAt descending (if missing, treat as oldest)
-        notes.sort((a, b) => {
-            const aPinned = a.pinned ? 1 : 0;
-            const bPinned = b.pinned ? 1 : 0;
-            if (aPinned !== bPinned) return bPinned - aPinned; // pinned at top
-            const aTime = a.createdAt || 0;
-            const bTime = b.createdAt || 0;
-            return bTime - aTime; // newest first
+        // Ensure each note has id, createdAt, pinned (already done in getAllProjects, but just in case)
+        notes = notes.map(note => {
+            if (!note.id) note.id = 'note_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            if (!note.createdAt) note.createdAt = Date.now();
+            if (note.pinned === undefined) note.pinned = false;
+            return note;
         });
+        // Sort manually: pinned first, then by createdAt desc (most recent first)
+        notes.sort((a, b) => (b.pinned - a.pinned) || (b.createdAt - a.createdAt));
         return notes;
     }
 }
@@ -437,7 +460,7 @@ async function isNoteAdded(projectId, text) {
 async function addNote() {
     if (!currentProjectId || !lastEn) return;
     if (currentUser) {
-        // Check if already added (though button should be disabled)
+        // Check if already added (button should be disabled, but double-check)
         if (await isNoteAdded(currentProjectId, lastEn)) return;
         await firestoreDb.collection(`users/${currentUser.uid}/projects/${currentProjectId}/notes`).add({
             en: lastEn,
@@ -451,12 +474,14 @@ async function addNote() {
         if (p) {
             if (!p.notes) p.notes = [];
             if (!p.notes.some(n => n.en.trim().toLowerCase() === lastEn.toLowerCase())) {
-                p.notes.unshift({ 
-                    en: lastEn, 
+                const newNote = {
+                    id: 'note_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                    en: lastEn,
                     bn: lastBn,
                     pinned: false,
                     createdAt: Date.now()
-                });
+                };
+                p.notes.unshift(newNote); // Add to beginning (most recent first)
                 await saveProjectToDB(p);
             }
         }
@@ -468,45 +493,41 @@ async function addNote() {
     noteBtn.style.pointerEvents = "none";
 }
 
-async function deleteNote(e, noteIdOrText) {
-    e.stopPropagation();
+async function toggleNotePin(noteId) {
     if (!currentProjectId) return;
     if (currentUser) {
-        // noteIdOrText is the document ID
-        await firestoreDb.collection(`users/${currentUser.uid}/projects/${currentProjectId}/notes`).doc(noteIdOrText).delete();
+        const noteRef = firestoreDb.collection(`users/${currentUser.uid}/projects/${currentProjectId}/notes`).doc(noteId);
+        await firestoreDb.runTransaction(async (transaction) => {
+            const noteDoc = await transaction.get(noteRef);
+            if (!noteDoc.exists) return;
+            const currentPinned = noteDoc.data().pinned || false;
+            transaction.update(noteRef, { pinned: !currentPinned });
+        });
     } else {
-        // noteIdOrText is the encoded English text
-        const word = decodeURIComponent(noteIdOrText);
         const projects = await getAllProjects();
         let p = projects.find(x => x.id == currentProjectId);
-        if (p) {
-            p.notes = p.notes.filter(n => n.en.trim() !== word.trim());
-            await saveProjectToDB(p);
+        if (p && p.notes) {
+            const note = p.notes.find(n => n.id === noteId);
+            if (note) {
+                note.pinned = !note.pinned;
+                await saveProjectToDB(p);
+            }
         }
     }
     renderNotes();
 }
 
-/* --- Toggle pin for a note --- */
-async function togglePinNote(e, noteIdOrText, currentPinned) {
+async function deleteNote(e, noteId) {
     e.stopPropagation();
     if (!currentProjectId) return;
     if (currentUser) {
-        // noteIdOrText is the document ID
-        await firestoreDb.collection(`users/${currentUser.uid}/projects/${currentProjectId}/notes`).doc(noteIdOrText).update({
-            pinned: !currentPinned
-        });
+        await firestoreDb.collection(`users/${currentUser.uid}/projects/${currentProjectId}/notes`).doc(noteId).delete();
     } else {
-        // noteIdOrText is the encoded English text
-        const word = decodeURIComponent(noteIdOrText);
         const projects = await getAllProjects();
         let p = projects.find(x => x.id == currentProjectId);
         if (p && p.notes) {
-            const note = p.notes.find(n => n.en.trim() === word.trim());
-            if (note) {
-                note.pinned = !note.pinned;
-                await saveProjectToDB(p);
-            }
+            p.notes = p.notes.filter(n => n.id !== noteId);
+            await saveProjectToDB(p);
         }
     }
     renderNotes();
@@ -519,23 +540,13 @@ async function renderNotes() {
     }
     const notes = await getNotesForProject(currentProjectId);
     const html = notes.map(note => {
-        if (currentUser) {
-            // note has an id
-            const pinIcon = note.pinned ? '📍' : '📌';
-            return `<div class="note-card" onclick="handleNoteClick('${note.en.replace(/'/g, "\\'")}')">
-                <span class="delete-note" onclick="deleteNote(event, '${note.id}')">✕</span>
-                <span class="pin-note" onclick="togglePinNote(event, '${note.id}', ${note.pinned})" style="cursor:pointer; margin-right:8px;">${pinIcon}</span>
-                <b style="font-size:13px;">${note.en.substring(0,30)}</b><br><small style="opacity:0.8;">${note.bn.substring(0,40)}</small>
-            </div>`;
-        } else {
-            // guest: use encoded English as identifier
-            const pinIcon = note.pinned ? '📍' : '📌';
-            return `<div class="note-card" onclick="handleNoteClick('${note.en.replace(/'/g, "\\'")}')">
-                <span class="delete-note" onclick="deleteNote(event, '${encodeURIComponent(note.en)}')">✕</span>
-                <span class="pin-note" onclick="togglePinNote(event, '${encodeURIComponent(note.en)}', ${note.pinned})" style="cursor:pointer; margin-right:8px;">${pinIcon}</span>
-                <b style="font-size:13px;">${note.en.substring(0,30)}</b><br><small style="opacity:0.8;">${note.bn.substring(0,40)}</small>
-            </div>`;
-        }
+        const pinIcon = note.pinned ? '📌' : '📍'; // filled pin vs outline (you can change the emoji)
+        return `<div class="note-card" onclick="handleNoteClick('${note.en.replace(/'/g, "\\'")}')">
+            <span class="delete-note" onclick="deleteNote(event, '${note.id}')">✕</span>
+            <span class="pin-note" onclick="event.stopPropagation(); toggleNotePin('${note.id}')">${pinIcon}</span>
+            <b style="font-size:13px; display:block; margin-left:20px;">${note.en.substring(0,30)}</b>
+            <small style="opacity:0.8; display:block; margin-left:20px;">${note.bn.substring(0,40)}</small>
+        </div>`;
     }).join('');
     document.getElementById('notes-container').innerHTML = html;
 }
@@ -557,7 +568,6 @@ async function toggleView() {
         const projs = await getAllProjects();
         const existing = projs.find(p => p.id == currentProjectId);
         const projectData = existing ? { ...existing, content } : { id: currentProjectId, name: content.substring(0,20), content, pinned: false };
-        // notes are not included – they are stored separately
         await saveProjectToDB(projectData);
         reader.innerText = content; document.getElementById('editor-view').style.display = 'none';
         reader.style.display = 'block'; if(isNotebookVisible) document.getElementById('left-notes-panel').style.display = 'block';
@@ -723,7 +733,6 @@ function isValidEmail(email) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-/* --- Helper to convert Firebase error codes to user-friendly messages --- */
 function getFriendlyAuthError(error) {
     const code = error.code;
     switch (code) {
@@ -825,7 +834,6 @@ async function handleSignup() {
     }
 }
 
-/* --- Real Google Sign-In --- */
 async function handleGoogleLogin() {
     const provider = new firebase.auth.GoogleAuthProvider();
     try {
@@ -837,7 +845,6 @@ async function handleGoogleLogin() {
     }
 }
 
-/* --- Real Password Reset --- */
 async function forgotPassword() {
     const email = document.getElementById('login-email').value.trim();
     if (!email) {
