@@ -166,14 +166,19 @@ async function migrateGuestProjects() {
 
         await batch.commit();
 
-        // Migrate notes for each new project
+        // Migrate notes for each new project, preserving pinned and createdAt if present
         for (const { id, notes } of projectsToMigrate) {
             for (const note of notes) {
-                await firestoreDb.collection(`users/${currentUser.uid}/projects/${id}/notes`).add({
+                // Prepare note data with defaults if fields missing
+                const noteData = {
                     en: note.en,
                     bn: note.bn,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
+                    pinned: note.pinned === undefined ? false : note.pinned,
+                    // If guest note had a createdAt (number), convert to Firestore Timestamp
+                    // Otherwise use server timestamp
+                    createdAt: note.createdAt ? firebase.firestore.Timestamp.fromMillis(note.createdAt) : firebase.firestore.FieldValue.serverTimestamp()
+                };
+                await firestoreDb.collection(`users/${currentUser.uid}/projects/${id}/notes`).add(noteData);
             }
         }
 
@@ -389,17 +394,28 @@ function createNewProject() {
     hidePanel(); closeAll(); renderProjects(); renderNotes(); 
 }
 
-/* --- Notes functions (adapted for sub‑collection) --- */
+/* --- Notes functions (adapted for sub‑collection and pinning) --- */
 
 async function getNotesForProject(projectId) {
     if (!projectId) return [];
     if (currentUser) {
-        const snapshot = await firestoreDb.collection(`users/${currentUser.uid}/projects/${projectId}/notes`).get();
+        const snapshot = await firestoreDb.collection(`users/${currentUser.uid}/projects/${projectId}/notes`)
+            .orderBy('pinned', 'desc')
+            .orderBy('createdAt', 'desc')
+            .get();
         return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } else {
         const projects = await getAllProjects();
         const project = projects.find(p => p.id == projectId);
-        return project?.notes || [];
+        let notes = project?.notes || [];
+        // Ensure each note has pinned and createdAt, then sort
+        notes = notes.map(n => ({
+            ...n,
+            pinned: n.pinned === undefined ? false : n.pinned,
+            createdAt: n.createdAt || 0
+        }));
+        notes.sort((a, b) => (b.pinned - a.pinned) || (b.createdAt - a.createdAt));
+        return notes;
     }
 }
 
@@ -424,6 +440,7 @@ async function addNote() {
         await firestoreDb.collection(`users/${currentUser.uid}/projects/${currentProjectId}/notes`).add({
             en: lastEn,
             bn: lastBn,
+            pinned: false,
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
         });
     } else {
@@ -432,7 +449,12 @@ async function addNote() {
         if (p) {
             if (!p.notes) p.notes = [];
             if (!p.notes.some(n => n.en.trim().toLowerCase() === lastEn.toLowerCase())) {
-                p.notes.unshift({ en: lastEn, bn: lastBn });
+                p.notes.unshift({
+                    en: lastEn,
+                    bn: lastBn,
+                    pinned: false,
+                    createdAt: Date.now()
+                });
                 await saveProjectToDB(p);
             }
         }
@@ -442,6 +464,34 @@ async function addNote() {
     noteBtn.innerHTML = "✅ Already Added";
     noteBtn.style.opacity = "0.7";
     noteBtn.style.pointerEvents = "none";
+}
+
+async function toggleNotePin(identifier, event) {
+    event.stopPropagation(); // Prevent opening the note
+    if (!currentProjectId) return;
+
+    if (currentUser) {
+        // identifier is the Firestore document ID
+        const noteRef = firestoreDb.collection(`users/${currentUser.uid}/projects/${currentProjectId}/notes`).doc(identifier);
+        const doc = await noteRef.get();
+        if (doc.exists) {
+            const currentPinned = doc.data().pinned || false;
+            await noteRef.update({ pinned: !currentPinned });
+        }
+    } else {
+        // identifier is the encoded English text
+        const word = decodeURIComponent(identifier);
+        const projects = await getAllProjects();
+        let p = projects.find(x => x.id == currentProjectId);
+        if (p && p.notes) {
+            const noteIndex = p.notes.findIndex(n => n.en.trim() === word.trim());
+            if (noteIndex !== -1) {
+                p.notes[noteIndex].pinned = !p.notes[noteIndex].pinned;
+                await saveProjectToDB(p);
+            }
+        }
+    }
+    renderNotes();
 }
 
 async function deleteNote(e, noteIdOrText) {
@@ -473,12 +523,14 @@ async function renderNotes() {
         if (currentUser) {
             // note has an id
             return `<div class="note-card" onclick="handleNoteClick('${note.en.replace(/'/g, "\\'")}')">
+                <span class="pin-note" onclick="toggleNotePin('${note.id}', event)">${note.pinned ? '📌' : '📍'}</span>
                 <span class="delete-note" onclick="deleteNote(event, '${note.id}')">✕</span>
                 <b style="font-size:13px;">${note.en.substring(0,30)}</b><br><small style="opacity:0.8;">${note.bn.substring(0,40)}</small>
             </div>`;
         } else {
             // guest: use encoded English as identifier
             return `<div class="note-card" onclick="handleNoteClick('${note.en.replace(/'/g, "\\'")}')">
+                <span class="pin-note" onclick="toggleNotePin('${encodeURIComponent(note.en)}', event)">${note.pinned ? '📌' : '📍'}</span>
                 <span class="delete-note" onclick="deleteNote(event, '${encodeURIComponent(note.en)}')">✕</span>
                 <b style="font-size:13px;">${note.en.substring(0,30)}</b><br><small style="opacity:0.8;">${note.bn.substring(0,40)}</small>
             </div>`;
