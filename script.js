@@ -670,6 +670,32 @@ function isValidEmail(email) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+/* --- Helper to convert Firebase error codes to user-friendly messages --- */
+function getFriendlyAuthError(error) {
+    const code = error.code;
+    switch (code) {
+        case 'auth/wrong-password':
+        case 'auth/invalid-login-credentials':
+            return 'Incorrect password. Please try again.';
+        case 'auth/user-not-found':
+            return 'This email is not registered.';
+        case 'auth/email-already-in-use':
+            return 'Email already exists. Please login instead.';
+        case 'auth/invalid-email':
+            return 'Invalid email address.';
+        case 'auth/weak-password':
+            return 'Password should be at least 6 characters.';
+        case 'auth/too-many-requests':
+            return 'Too many unsuccessful attempts. Please try again later.';
+        case 'auth/network-request-failed':
+            return 'Network error. Please check your connection.';
+        default:
+            // Fallback: return a generic message without exposing the raw error
+            console.warn('Unhandled auth error code:', code);
+            return 'Authentication failed. Please try again.';
+    }
+}
+
 async function handleLogin() {
     const email = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
@@ -698,7 +724,8 @@ async function handleLogin() {
         closeAuthModal();
     } catch (error) {
         console.error(error);
-        document.getElementById('login-password-error').textContent = error.message;
+        // Use friendly message instead of raw error.message
+        document.getElementById('login-password-error').textContent = getFriendlyAuthError(error);
     }
 }
 
@@ -743,7 +770,8 @@ async function handleSignup() {
         closeAuthModal();
     } catch (error) {
         console.error(error);
-        document.getElementById('signup-password-error').textContent = error.message;
+        // Use friendly message instead of raw error.message
+        document.getElementById('signup-password-error').textContent = getFriendlyAuthError(error);
     }
 }
 
@@ -755,7 +783,7 @@ async function handleGoogleLogin() {
         closeAuthModal();
     } catch (error) {
         console.error(error);
-        alert(error.message);
+        alert(error.message);  // Keep alert for Google errors (optional)
     }
 }
 
